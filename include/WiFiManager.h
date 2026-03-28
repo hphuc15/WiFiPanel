@@ -98,7 +98,6 @@ typedef struct
 
 /**
  * @brief Initialize event group, NVS flash, and WiFi driver.
- * @note  esp_netif_init() must be called before this function.
  * @param wm Pointer to WiFiManager instance.
  */
 void WiFiManager_Init(WiFiManager_t *wm);

@@ -780,6 +780,12 @@ void WiFiManager_Init(WiFiManager_t *wm)
 {
     esp_err_t ret;
 
+    ret = esp_netif_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "[Init] Failed to initialize network interface (netif)!");
+        return;
+    }
     if (wm->event.group == NULL)
     {
         wm->event.group = xEventGroupCreate();
