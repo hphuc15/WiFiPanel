@@ -207,7 +207,7 @@ static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
             return ESP_ERR_INVALID_ARG;
         }
 
-        char *html = WiFiManagerPage_Build(&wm->page);
+        char *html = WiFiManagerPage_Build(&wm);
         if (!html)
         {
             ESP_LOGE(TAG, "[CP] Failed to generate config page.");
