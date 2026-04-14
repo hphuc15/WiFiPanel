@@ -156,13 +156,13 @@ wifi_mode_t WiFiManager_GetMode(void);
 
 /**
  * @brief Zero-initialize a WiFiManagerPage.
- * @param page Pointer to page instance.
+ * @param wm Pointer to wm instance.
  */
 void WiFiManagerPage_Init(WiFiManager_t *wm);
 
 /**
  * @brief Add a dynamic input field to the captive portal form.
- * @param page        Pointer to page instance.
+ * @param wm          Pointer to wm instance.
  * @param id          HTML element id and POST key.
  * @param label       Label shown above the field.
  * @param placeholder Hint text inside the input (NULL = none).
@@ -178,15 +178,15 @@ int WiFiManagerPage_AddParam(WiFiManager_t *wm,
 
 /**
  * @brief Get the current value of a field by id.
- * @param page Pointer to page instance.
- * @param id   Field id to look up.
+ * @param wm    Pointer to wm instance.
+ * @param id    Field id to look up.
  * @return Pointer to value string (valid while page is alive), or NULL if not found.
  */
 const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id);
 
 /**
  * @brief Build the full HTML configuration page.
- * @param page Pointer to page instance.
+ * @param wm    Pointer to wm instance.
  * @return Heap-allocated HTML string, or NULL on failure. Caller must free().
  */
 char *WiFiManagerPage_Build(const WiFiManager_t *wm);
