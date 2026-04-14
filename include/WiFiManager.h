@@ -1,4 +1,5 @@
-#pragma once
+#ifndef WIFIMANAGER_H
+#define WIFIMANAGER_H
 
 #include <string.h>
 #include <stdbool.h>
@@ -121,6 +122,16 @@ void WiFiManager_StartAP(WiFiManager_t *wm);
 void WiFiManager_ConfigViaAP(WiFiManager_t *wm);
 
 /**
+ * @brief Try connect using saved STA credentials, fallback to AP if failed.
+ *
+ * Load WiFi config from NVS, attempt STA connection, wait for result,
+ * and start AP configuration mode if connection fails or no valid SSID.
+ *
+ * @param wm Pointer to WiFiManager instance
+ */
+void WiFiManager_AutoConnect(WiFiManager_t *wm);
+
+/**
  * @brief Stop WiFi and unregister all event handlers.
  * @param wm Pointer to WiFiManager instance.
  */
@@ -147,7 +158,7 @@ wifi_mode_t WiFiManager_GetMode(void);
  * @brief Zero-initialize a WiFiManagerPage.
  * @param page Pointer to page instance.
  */
-void WiFiManagerPage_Init(WiFiManagerPage_t *page);
+void WiFiManagerPage_Init(WiFiManager_t *wm);
 
 /**
  * @brief Add a dynamic input field to the captive portal form.
@@ -160,7 +171,7 @@ void WiFiManagerPage_Init(WiFiManagerPage_t *page);
  * @param required    true if field must be non-empty before submit.
  * @return 0 on success, -1 if WM_MAX_PARAMS exceeded.
  */
-int WiFiManagerPage_AddParam(WiFiManagerPage_t *page,
+int WiFiManagerPage_AddParam(WiFiManager_t *wm,
                              const char *id, const char *label,
                              const char *placeholder, const char *value,
                              const char *type, bool required);
@@ -171,11 +182,15 @@ int WiFiManagerPage_AddParam(WiFiManagerPage_t *page,
  * @param id   Field id to look up.
  * @return Pointer to value string (valid while page is alive), or NULL if not found.
  */
-const char *WiFiManagerPage_GetParam(const WiFiManagerPage_t *page, const char *id);
+const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id);
 
 /**
  * @brief Build the full HTML configuration page.
  * @param page Pointer to page instance.
  * @return Heap-allocated HTML string, or NULL on failure. Caller must free().
  */
-char *WiFiManagerPage_Build(const WiFiManagerPage_t *page);
+char *WiFiManagerPage_Build(const WiFiManager_t *wm);
+
+
+
+#endif /* WIFIMANAGER_H */
