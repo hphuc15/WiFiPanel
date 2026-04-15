@@ -58,7 +58,7 @@ typedef struct
     EventGroupHandle_t group;                       /**< Synchronizes WiFi states across tasks. */
     esp_event_handler_instance_t ap_handle;         /**< Handler instance for AP events. */
     esp_event_handler_instance_t sta_handle;        /**< Handler instance for STA events. */
-    esp_event_handler_instance_t sta_disc_handle;
+    esp_event_handler_instance_t sta_disc_handle;   /**< Handler instance for WIFI_EVENT_STA_DISCONNECTED. */
     esp_event_handler_instance_t ip_handle;         /**< Handler instance for IP_EVENT_STA_GOT_IP. */
 } WiFiManagerEvent_t;
 

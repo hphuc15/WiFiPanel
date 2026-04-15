@@ -63,12 +63,23 @@ static void WiFiManager_EventHandler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_STA_DISCONNECTED:
         {
-            xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
-            xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
-            ESP_LOGE(TAG, "[STA] Failed to connect to the AP, reason: %d", event->reason);
-            if (wm->DisconnectedAP_Cb)
-                wm->DisconnectedAP_Cb();
+            ESP_LOGE(TAG, "[STA] Disconnected from AP, reason: %d", event->reason);
+
+            if (wm->sta_retry_num > 0)
+            {
+                wm->sta_retry_num--;
+                ESP_LOGW(TAG, "[STA] Retrying... (%d left)", wm->sta_retry_num);
+                esp_wifi_connect();
+            }
+            else
+            {
+                xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
+                xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
+                if (wm->DisconnectedAP_Cb){
+                    wm->DisconnectedAP_Cb();
+                }
+            }
             break;
         }
         }
@@ -338,7 +349,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Get saved STA configuration from NVS */
     wifi_config_t saved_config;
     esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
-    saved_config.sta.failure_retry_cnt = 5;
+    wm->sta_retry_num = 5;
 
     if (err != ESP_OK)
     {
