@@ -134,7 +134,7 @@ void WiFiManager_StartSTA(WiFiManager_t *wm)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START,
                                                         WiFiManager_EventHandler, wm, &wm->event.sta_handle));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED,
-                                                        WiFiManager_EventHandler, wm, &wm->event.sta_handle));
+                                                        WiFiManager_EventHandler, wm, &wm->event.sta_disc_handle));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                         WiFiManager_EventHandler, wm, &wm->event.ip_handle));
 
@@ -194,6 +194,11 @@ void WiFiManager_Stop(WiFiManager_t *wm)
     {
         esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.sta_handle);
         wm->event.sta_handle = NULL;
+    }
+    if (wm->event.sta_disc_handle)
+    {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.sta_disc_handle);
+        wm->event.sta_disc_handle = NULL;
     }
     if (wm->event.ip_handle)
     {
@@ -333,6 +338,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Get saved STA configuration from NVS */
     wifi_config_t saved_config;
     esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
+    saved_config.sta.failure_retry_cnt = 5;
 
     if (err != ESP_OK)
     {
