@@ -55,11 +55,13 @@ typedef void (*WiFiManager_Callback_DisconnectedAP_t)(void);
 /** Holds the FreeRTOS event group and registered ESP event handler instances. */
 typedef struct
 {
-    EventGroupHandle_t group;                       /**< Synchronizes WiFi states across tasks. */
-    esp_event_handler_instance_t ap_handle;         /**< Handler instance for AP events. */
-    esp_event_handler_instance_t sta_handle;        /**< Handler instance for STA events. */
-    esp_event_handler_instance_t sta_disc_handle;   /**< Handler instance for WIFI_EVENT_STA_DISCONNECTED. */
-    esp_event_handler_instance_t ip_handle;         /**< Handler instance for IP_EVENT_STA_GOT_IP. */
+    EventGroupHandle_t group;
+    esp_event_handler_instance_t ap_connected_handle;    /**< Handler instance for WIFI_EVENT_AP_STACONNECTED. */
+    esp_event_handler_instance_t ap_disconnected_handle; /**< Handler instance for WIFI_EVENT_AP_STADISCONNECTED. */
+    esp_event_handler_instance_t ap_start_handle;        /**< Handler instance for WIFI_EVENT_AP_START. */
+    esp_event_handler_instance_t sta_handle;             /**< Handler instance for WIFI_EVENT_STA_START. */
+    esp_event_handler_instance_t sta_disc_handle;        /**< Handler instance for WIFI_EVENT_STA_DISCONNECTED. */
+    esp_event_handler_instance_t ip_handle;              /**< Handler instance for IP_EVENT_STA_GOT_IP. */
 } WiFiManagerEvent_t;
 
 /** Describes a single dynamic input field on the captive portal form. */

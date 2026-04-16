@@ -55,6 +55,7 @@ static void WiFiManager_EventHandler(void *arg, esp_event_base_t event_base,
         case WIFI_EVENT_STA_START:
         {
             xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STASTART);
+            vTaskDelay(pdMS_TO_TICKS(100));
             err = esp_wifi_connect();
             if (err != ESP_OK)
                 ESP_LOGE(TAG, "[STA] Failed to connect to the AP: %s", esp_err_to_name(err));
@@ -63,6 +64,10 @@ static void WiFiManager_EventHandler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_STA_DISCONNECTED:
         {
+            if (!(xEventGroupGetBits(wm->event.group) & WM_EVENT_BIT_STASTART)){
+                break;
+            }
+
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
             ESP_LOGE(TAG, "[STA] Disconnected from AP, reason: %d", event->reason);
 
@@ -164,12 +169,9 @@ void WiFiManager_StartAP(WiFiManager_t *wm)
     if (!wm->netif)
         wm->netif = esp_netif_create_default_wifi_ap();
 
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED,
-                                                        WiFiManager_EventHandler, wm, &wm->event.ap_handle));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED,
-                                                        WiFiManager_EventHandler, wm, &wm->event.ap_handle));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_START,
-                                                        WiFiManager_EventHandler, wm, &wm->event.ap_handle));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, WiFiManager_EventHandler, wm, &wm->event.ap_connected_handle));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, WiFiManager_EventHandler, wm, &wm->event.ap_disconnected_handle));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_START, WiFiManager_EventHandler, wm, &wm->event.ap_start_handle));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wm->config));
@@ -196,10 +198,20 @@ void WiFiManager_Stop(WiFiManager_t *wm)
     }
     ESP_LOGI(TAG, "[Stop] Stopping WiFi (mode: %d)", mode);
 
-    if (wm->event.ap_handle)
+    if (wm->event.ap_connected_handle)
     {
-        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.ap_handle);
-        wm->event.ap_handle = NULL;
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.ap_connected_handle);
+        wm->event.ap_connected_handle = NULL;
+    }
+    if (wm->event.ap_disconnected_handle)
+    {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.ap_disconnected_handle);
+        wm->event.ap_disconnected_handle = NULL;
+    }
+    if (wm->event.ap_start_handle)
+    {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wm->event.ap_start_handle);
+        wm->event.ap_start_handle = NULL;
     }
     if (wm->event.sta_handle)
     {
@@ -220,19 +232,16 @@ void WiFiManager_Stop(WiFiManager_t *wm)
     if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA)
     {
         err = esp_wifi_disconnect();
-        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED)
-        {
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
             ESP_LOGW(TAG, "[Stop] Disconnect failed: %s", esp_err_to_name(err));
         }
-        else
-        {
+        else{
             ESP_LOGI(TAG, "[Stop] STA disconnected requested");
         }
     }
 
     err = esp_wifi_stop();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED)
-    {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
         ESP_LOGE(TAG, "[Stop] Failed to stop WiFi: %s", esp_err_to_name(err));
     }
 
@@ -316,6 +325,7 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
     WiFiManager_StopDNS(dns);
     WiFiManager_StopWebServer(wm);
     WiFiManager_Stop(wm);
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     /* Copy credentials into clean STA config */
     wifi_auth_mode_t authmode = wm->config.sta.threshold.authmode;
@@ -349,7 +359,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Get saved STA configuration from NVS */
     wifi_config_t saved_config;
     esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
-    wm->sta_retry_num = 5;
+    // wm->sta_retry_num = 3;
 
     if (err != ESP_OK)
     {
@@ -368,7 +378,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     }
 
     /* Avoid using captive portal AP config as STA */
-    if (strcmp((char *)saved_config.sta.ssid, "ESP32_Config") == 0)
+    if (strcmp((char *)saved_config.sta.ssid, WM_AP_SSID_DEFAULT) == 0)
     {
         ESP_LOGW(TAG, "[AutoConnect] Saved SSID is config AP (%s), ignoring...",
                  (char *)saved_config.sta.ssid);
