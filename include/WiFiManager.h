@@ -1,4 +1,5 @@
-#pragma once
+#ifndef WIFIMANAGER_H
+#define WIFIMANAGER_H
 
 #include <string.h>
 #include <stdbool.h>
@@ -21,7 +22,7 @@
 /** Captive portal page limits. */
 #define WM_MAX_PARAMS 5                           /**< Max number of extra input fields on the portal page. */
 #define WM_FIELD_LEN 128                          /**< Max length of each field string (id, label, value, ...). */
-#define WM_PORTAL_BODY_SIZE 512                   /**< Max size of HTTP POST body from the portal form. */
+#define WM_PORTAL_BODY_SIZE 1024                  /**< Max size of HTTP POST body from the portal form. */
 #define WM_PORTAL_TIMOUT_MS (5UL * 60UL * 1000Ul) /**< Max time (ms) waiting for portal form submission. */
 
 /** WiFi event bits used with the event group. */
@@ -54,10 +55,13 @@ typedef void (*WiFiManager_Callback_DisconnectedAP_t)(void);
 /** Holds the FreeRTOS event group and registered ESP event handler instances. */
 typedef struct
 {
-    EventGroupHandle_t group;                /**< Synchronizes WiFi states across tasks. */
-    esp_event_handler_instance_t ap_handle;  /**< Handler instance for AP events. */
-    esp_event_handler_instance_t sta_handle; /**< Handler instance for STA events. */
-    esp_event_handler_instance_t ip_handle;  /**< Handler instance for IP_EVENT_STA_GOT_IP. */
+    EventGroupHandle_t group;
+    esp_event_handler_instance_t ap_connected_handle;    /**< Handler instance for WIFI_EVENT_AP_STACONNECTED. */
+    esp_event_handler_instance_t ap_disconnected_handle; /**< Handler instance for WIFI_EVENT_AP_STADISCONNECTED. */
+    esp_event_handler_instance_t ap_start_handle;        /**< Handler instance for WIFI_EVENT_AP_START. */
+    esp_event_handler_instance_t sta_handle;             /**< Handler instance for WIFI_EVENT_STA_START. */
+    esp_event_handler_instance_t sta_disc_handle;        /**< Handler instance for WIFI_EVENT_STA_DISCONNECTED. */
+    esp_event_handler_instance_t ip_handle;              /**< Handler instance for IP_EVENT_STA_GOT_IP. */
 } WiFiManagerEvent_t;
 
 /** Describes a single dynamic input field on the captive portal form. */
@@ -121,6 +125,16 @@ void WiFiManager_StartAP(WiFiManager_t *wm);
 void WiFiManager_ConfigViaAP(WiFiManager_t *wm);
 
 /**
+ * @brief Try connect using saved STA credentials, fallback to AP if failed.
+ *
+ * Load WiFi config from NVS, attempt STA connection, wait for result,
+ * and start AP configuration mode if connection fails or no valid SSID.
+ *
+ * @param wm Pointer to WiFiManager instance
+ */
+void WiFiManager_AutoConnect(WiFiManager_t *wm);
+
+/**
  * @brief Stop WiFi and unregister all event handlers.
  * @param wm Pointer to WiFiManager instance.
  */
@@ -145,13 +159,13 @@ wifi_mode_t WiFiManager_GetMode(void);
 
 /**
  * @brief Zero-initialize a WiFiManagerPage.
- * @param page Pointer to page instance.
+ * @param wm Pointer to wm instance.
  */
-void WiFiManagerPage_Init(WiFiManagerPage_t *page);
+void WiFiManagerPage_Init(WiFiManager_t *wm);
 
 /**
  * @brief Add a dynamic input field to the captive portal form.
- * @param page        Pointer to page instance.
+ * @param wm          Pointer to wm instance.
  * @param id          HTML element id and POST key.
  * @param label       Label shown above the field.
  * @param placeholder Hint text inside the input (NULL = none).
@@ -160,22 +174,26 @@ void WiFiManagerPage_Init(WiFiManagerPage_t *page);
  * @param required    true if field must be non-empty before submit.
  * @return 0 on success, -1 if WM_MAX_PARAMS exceeded.
  */
-int WiFiManagerPage_AddParam(WiFiManagerPage_t *page,
+int WiFiManagerPage_AddParam(WiFiManager_t *wm,
                              const char *id, const char *label,
                              const char *placeholder, const char *value,
                              const char *type, bool required);
 
 /**
  * @brief Get the current value of a field by id.
- * @param page Pointer to page instance.
- * @param id   Field id to look up.
+ * @param wm    Pointer to wm instance.
+ * @param id    Field id to look up.
  * @return Pointer to value string (valid while page is alive), or NULL if not found.
  */
-const char *WiFiManagerPage_GetParam(const WiFiManagerPage_t *page, const char *id);
+const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id);
 
 /**
  * @brief Build the full HTML configuration page.
- * @param page Pointer to page instance.
+ * @param wm    Pointer to wm instance.
  * @return Heap-allocated HTML string, or NULL on failure. Caller must free().
  */
-char *WiFiManagerPage_Build(const WiFiManagerPage_t *page);
+char *WiFiManagerPage_Build(const WiFiManager_t *wm);
+
+
+
+#endif /* WIFIMANAGER_H */
