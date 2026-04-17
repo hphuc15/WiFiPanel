@@ -296,7 +296,7 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
     EventBits_t bits = xEventGroupWaitBits(wm->event.group, WM_EVENT_BIT_APSTART, pdFALSE, pdFALSE, pdMS_TO_TICKS(30000));
     if (!(bits & WM_EVENT_BIT_APSTART))
     {
-        ESP_LOGE(TAG, "[ConfigViaAP] Timeout,AP failed to start");
+        ESP_LOGE(TAG, "[PORTAL] Timeout, AP failed to start");
         WiFiManager_Stop(wm);
         return;
     }
@@ -315,16 +315,32 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
 
     if (!notified)
     {
-        ESP_LOGE(TAG, "[ConfigViaAP] Timeout no credentials received");
+        ESP_LOGE(TAG, "[PORTAL] Timeout no credentials received");
+        ESP_LOGI(TAG, "[PORTAL] Stopping DNS...");
         WiFiManager_StopDNS(dns);
+        ESP_LOGI(TAG, "[PORTAL] DNS stopped");
+        
+        ESP_LOGI(TAG, "[PORTAL] Stopping HTTP...");
         WiFiManager_StopWebServer(wm);
+        ESP_LOGI(TAG, "[PORTAL] HTTP stopped");
+
+        ESP_LOGI(TAG, "[PORTAL] Stopping AP...");
         WiFiManager_Stop(wm);
+        ESP_LOGI(TAG, "[PORTAL] AP stopped");
         return;
     }
 
+    ESP_LOGI(TAG, "[PORTAL] Stopping DNS...");
     WiFiManager_StopDNS(dns);
+    ESP_LOGI(TAG, "[PORTAL] DNS stopped");
+    
+    ESP_LOGI(TAG, "[PORTAL] Stopping HTTP...");
     WiFiManager_StopWebServer(wm);
+    ESP_LOGI(TAG, "[PORTAL] HTTP stopped");
+
+    ESP_LOGI(TAG, "[PORTAL] Stopping AP...");
     WiFiManager_Stop(wm);
+    ESP_LOGI(TAG, "[PORTAL] AP stopped");
     vTaskDelay(pdMS_TO_TICKS(500));
 
     /* Copy credentials into clean STA config */
@@ -342,7 +358,7 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
     wm->config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     wm->config.sta.failure_retry_cnt = wm->sta_retry_num;
 
-    ESP_LOGI(TAG, "[STA_ConfigViaAP] Switch to STA Mode");
+    ESP_LOGI(TAG, "[PORTAL] Switching to STA...");
     WiFiManager_StartSTA(wm);
 }
 
@@ -350,11 +366,11 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
 {
     if (!wm)
     {
-        ESP_LOGE(TAG, "[AutoConnect] WiFiManager instance is NULL");
+        ESP_LOGE(TAG, "[AUTOCONNECT] WiFiManager instance is NULL");
         return;
     }
 
-    ESP_LOGI(TAG, "[AutoConnect] Attempting to load saved credentials from NVS...");
+    ESP_LOGI(TAG, "[AUTOCONNECT] Attempting to load saved credentials from NVS...");
 
     /* Get saved STA configuration from NVS */
     wifi_config_t saved_config;
@@ -363,8 +379,8 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "[AutoConnect] Failed to get config from NVS: %s", esp_err_to_name(err));
-        ESP_LOGI(TAG, "[AutoConnect] Starting AP configuration mode");
+        ESP_LOGE(TAG, "[AUTOCONNECT] Failed to get config from NVS: %s", esp_err_to_name(err));
+        ESP_LOGI(TAG, "[AUTOCONNECT] Starting AP configuration mode");
         WiFiManager_ConfigViaAP(wm);
         return;
     }
@@ -372,7 +388,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Check if saved credentials exist */
     if (strlen((char *)saved_config.sta.ssid) == 0)
     {
-        ESP_LOGW(TAG, "[AutoConnect] No saved SSID found in NVS, starting AP configuration mode");
+        ESP_LOGW(TAG, "[AUTOCONNECT] No saved SSID found in NVS, starting AP configuration mode");
         WiFiManager_ConfigViaAP(wm);
         return;
     }
@@ -380,7 +396,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Avoid using captive portal AP config as STA */
     if (strcmp((char *)saved_config.sta.ssid, WM_AP_SSID_DEFAULT) == 0)
     {
-        ESP_LOGW(TAG, "[AutoConnect] Saved SSID is config AP (%s), ignoring...",
+        ESP_LOGW(TAG, "[AUTOCONNECT] Saved SSID is config AP (%s), ignoring...",
                  (char *)saved_config.sta.ssid);
 
         WiFiManager_ConfigViaAP(wm);
@@ -391,7 +407,7 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     memset(&wm->config, 0, sizeof(wifi_config_t));
     memcpy(&wm->config.sta, &saved_config.sta, sizeof(wifi_sta_config_t));
 
-    ESP_LOGI(TAG, "[AutoConnect] Found saved SSID: %s, attempting to connect...", (char *)saved_config.sta.ssid);
+    ESP_LOGI(TAG, "[AUTOCONNECT] Found saved SSID: %s, attempting to connect...", (char *)saved_config.sta.ssid);
 
     xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED);
     /* Try to connect to saved AP */
@@ -408,18 +424,18 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     /* Check if we got connected */
     if (bits & WM_EVENT_BIT_STACONNECTED)
     {
-        ESP_LOGI(TAG, "[AutoConnect] Successfully connected to AP: %s", (char *)wm->config.sta.ssid);
+        ESP_LOGI(TAG, "[AUTOCONNECT] Successfully connected to AP: %s", (char *)wm->config.sta.ssid);
         return;
     }
 
     /* Connection failed - disconnect and clean up */
-    ESP_LOGW(TAG, "[AutoConnect] Failed to connect to saved AP: %s", (char *)wm->config.sta.ssid);
+    ESP_LOGW(TAG, "[AUTOCONNECT] Failed to connect to saved AP: %s", (char *)wm->config.sta.ssid);
 
     /* Stop STA mode before starting AP mode */
     WiFiManager_Stop(wm);
 
     /* Enter AP configuration mode after STA connect failure */
-    ESP_LOGI(TAG, "[AutoConnect] Falling back to AP configuration mode");
+    ESP_LOGI(TAG, "[AUTOCONNECT] Falling back to AP configuration mode");
     WiFiManager_ConfigViaAP(wm);
 }
 
