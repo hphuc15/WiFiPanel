@@ -194,6 +194,4 @@ const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id);
  */
 char *WiFiManagerPage_Build(const WiFiManager_t *wm);
 
-
-
 #endif /* WIFIMANAGER_H */

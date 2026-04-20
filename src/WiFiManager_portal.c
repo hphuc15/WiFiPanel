@@ -7,7 +7,9 @@
 #include "esp_event.h"
 #include "netinet/in.h"
 
-static const char *TAG = "[WiFi]";
+static const char *TAG_PORTAL   = "[WiFi][PORTAL]";
+static const char *TAG_DNS      = "[WiFi][DNS]";
+static const char *TAG_DHCP     = "[WiFi][DHCP]";
 
 /* ===================== INTERNAL: DNS SERVER ========================= */
 
@@ -49,23 +51,25 @@ static void dns_task(void *arg)
         .sin_addr.s_addr = INADDR_ANY,
     };
     bind(srv->sock, (struct sockaddr *)&addr, sizeof(addr));
-    ESP_LOGI(TAG, "[DNS] Started → " IPSTR, IP2STR(&srv->ip));
+    ESP_LOGI(TAG_DNS, "Started → " IPSTR, IP2STR(&srv->ip));
 
     while (1)
     {
         struct sockaddr_in client;
         socklen_t clen = sizeof(client);
-        int len = recvfrom(srv->sock, buf, sizeof(buf), 0,
-                           (struct sockaddr *)&client, &clen);
+        int len = recvfrom(srv->sock, buf, sizeof(buf), 0, (struct sockaddr *)&client, &clen);
 
-        if (len < (int)sizeof(dns_hdr_t))
+        if (len < (int)sizeof(dns_hdr_t)){
             continue;
+        }
 
         dns_hdr_t *hdr = (dns_hdr_t *)buf;
-        if (hdr->flags & htons(0x8000)) /* QR=1 → response, ignore */
+        if (hdr->flags & htons(0x8000)){ /* QR=1 → response, ignore */
             continue;
-        if (ntohs(hdr->qdcount) == 0)
+        }
+        if (ntohs(hdr->qdcount) == 0){
             continue;
+        }
 
         /* Build response in-place: QR=1, AA=1, RCODE=0 */
         hdr->flags = htons(0x8400);
@@ -88,8 +92,7 @@ static void dns_task(void *arg)
         memcpy(ans, &srv->ip.addr, 4);
         ans += 4;
 
-        sendto(srv->sock, buf, (int)(ans - buf), 0,
-               (struct sockaddr *)&client, clen);
+        sendto(srv->sock, buf, (int)(ans - buf), 0, (struct sockaddr *)&client, clen);
     }
     close(srv->sock);
     vTaskDelete(NULL);
@@ -99,8 +102,9 @@ static void dns_task(void *arg)
 static dns_server_t *dns_start(esp_ip4_addr_t ip)
 {
     dns_server_t *srv = calloc(1, sizeof(*srv));
-    if (!srv)
+    if (!srv){
         return NULL;
+    }
     srv->ip = ip;
     srv->sock = -1;
     xTaskCreate(dns_task, "dns_srv", 4096, srv, 5, &srv->task);
@@ -110,12 +114,15 @@ static dns_server_t *dns_start(esp_ip4_addr_t ip)
 /** Stop the DNS server and release all resources. */
 static void dns_stop(dns_server_t *srv)
 {
-    if (!srv)
+    if (!srv){
         return;
-    if (srv->sock >= 0)
+    }
+    if (srv->sock >= 0){
         close(srv->sock);
-    if (srv->task)
+    }
+    if (srv->task){
         vTaskDelete(srv->task);
+    }
     free(srv);
 }
 
@@ -147,7 +154,7 @@ static void url_decode(char *dst, const char *src, size_t dst_size)
 }
 
 /** Parse a URL-encoded form body and store field values into wm. */
-static esp_err_t WiFiManager_ParseUrlencoded(WiFiManager_t *wm, char *body)
+static esp_err_t _wm_parse_urlencoder(WiFiManager_t *wm, char *body)
 {
     char *sp_pair, *sp_kv;
     char *pair = strtok_r(body, "&", &sp_pair);
@@ -194,7 +201,7 @@ static esp_err_t WiFiManager_ParseUrlencoded(WiFiManager_t *wm, char *body)
 }
 
 /** Handle requests on the captive portal root URI ("/"). */
-static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
+static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
 {
     switch (req->method)
     {
@@ -203,14 +210,14 @@ static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
         WiFiManager_t *wm = (WiFiManager_t *)req->user_ctx;
         if (!wm)
         {
-            ESP_LOGE(TAG, "[CP] user context is null.");
+            ESP_LOGE(TAG_PORTAL, "User context is null.");
             return ESP_ERR_INVALID_ARG;
         }
 
         char *html = WiFiManagerPage_Build(wm);
         if (!html)
         {
-            ESP_LOGE(TAG, "[CP] Failed to generate config page.");
+            ESP_LOGE(TAG_PORTAL, "Failed to generate config page.");
             httpd_resp_send_500(req);
             return ESP_FAIL;
         }
@@ -226,7 +233,7 @@ static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
         WiFiManager_t *wm = (WiFiManager_t *)req->user_ctx;
         if (!wm)
         {
-            ESP_LOGE(TAG, "[CP] user context is null.");
+            ESP_LOGE(TAG_PORTAL, "user context is null.");
             return ESP_ERR_INVALID_ARG;
         }
 
@@ -240,12 +247,12 @@ static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
             return ESP_FAIL;
         }
         content[ret] = '\0';
-        WiFiManager_ParseUrlencoded(wm, content);
+        _wm_parse_urlencoder(wm, content);
 
-        ESP_LOGI(TAG, "[CP] Form body: %s", content);
+        ESP_LOGI(TAG_PORTAL, "Form body: %s", content);
         const char *resp_str = "Data received";
         httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-        ESP_LOGI(TAG, "[CP] Configuration received");
+        ESP_LOGI(TAG_PORTAL, "Configuration received");
 
         if (wm->portal_waiting_task)
             xTaskNotifyGive(wm->portal_waiting_task);
@@ -259,12 +266,12 @@ static esp_err_t WiFiManager_PortalRequestHandler(httpd_req_t *req)
 }
 
 /** Redirects all requests to the root page. */
-static esp_err_t WiFiManager_Portal404Handler(httpd_req_t *req, httpd_err_code_t err)
+static esp_err_t _wm_portal_404handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, "302 - Temporary Redirect");
     httpd_resp_set_hdr(req, "Location", "/");
     httpd_resp_send(req, "Redirect to the captive portal", HTTPD_RESP_USE_STRLEN);
-    ESP_LOGI(TAG, "[Captive Portal] - Redirecting to root");
+    ESP_LOGI(TAG_PORTAL, "Redirecting to root");
     return ESP_OK;
 }
 
@@ -272,12 +279,12 @@ static esp_err_t WiFiManager_Portal404Handler(httpd_req_t *req, httpd_err_code_t
 static httpd_uri_t root_get = {
     .uri = "/",
     .method = HTTP_GET,
-    .handler = WiFiManager_PortalRequestHandler,
+    .handler = _wm_portal_requesthandler,
     .user_ctx = NULL};
 static httpd_uri_t root_post = {
     .uri = "/",
     .method = HTTP_POST,
-    .handler = WiFiManager_PortalRequestHandler,
+    .handler = _wm_portal_requesthandler,
     .user_ctx = NULL};
 
 httpd_handle_t WiFiManager_StartWebServer(WiFiManager_t *wm)
@@ -288,17 +295,17 @@ httpd_handle_t WiFiManager_StartWebServer(WiFiManager_t *wm)
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 180;
 
-    ESP_LOGI(TAG, "[Captive Portal] - Starting server on port: '%d'", config.server_port);
+    ESP_LOGI(TAG_PORTAL, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK)
     {
-        ESP_LOGI(TAG, "[Captive Portal] - Registering URI handlers");
+        ESP_LOGI(TAG_PORTAL, "Registering URI handlers");
 
         root_post.user_ctx = wm;
         root_get.user_ctx = wm;
 
         httpd_register_uri_handler(server, &root_get);
         httpd_register_uri_handler(server, &root_post);
-        httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, WiFiManager_Portal404Handler);
+        httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, _wm_portal_404handler);
 
         wm->server = server;
     }
@@ -331,7 +338,7 @@ void WiFiManager_SetCaptivePortalURI(WiFiManager_t *wm)
     esp_netif_t *netif = wm->netif;
     if (!netif)
     {
-        ESP_LOGE(TAG, "[DHCP] netif is null");
+        ESP_LOGE(TAG_DHCP, "netif is null");
         return;
     }
 
@@ -339,13 +346,13 @@ void WiFiManager_SetCaptivePortalURI(WiFiManager_t *wm)
     ret = esp_netif_get_ip_info(netif, &ip_info);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "[DHCP] Failed to get IP info, error: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG_DHCP, "Failed to get IP info, error: %s", esp_err_to_name(ret));
         return;
     }
 
     char ip_addr[INET_ADDRSTRLEN];
     inet_ntoa_r(ip_info.ip.addr, ip_addr, INET_ADDRSTRLEN);
-    ESP_LOGI(TAG, "[AP Mode] - Set up softAP with IP: %s", ip_addr);
+    ESP_LOGI(TAG_PORTAL, "Set up softAP with IP: %s", ip_addr);
 
     char captiveportal_uri[32];
     snprintf(captiveportal_uri, sizeof(captiveportal_uri), "http://%s", ip_addr);
@@ -353,20 +360,25 @@ void WiFiManager_SetCaptivePortalURI(WiFiManager_t *wm)
     ret = esp_netif_dhcps_stop(netif);
     if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
     {
-        ESP_LOGW(TAG, "DHCP stop warning: %s", esp_err_to_name(ret));
+        ESP_LOGW(TAG_DHCP, "DHCP stop warning: %s", esp_err_to_name(ret));
         return;
     }
 
-    ret = esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI,
-                                 captiveportal_uri, strlen(captiveportal_uri));
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "[DHCP] - Failed to set DHCP option: %s", esp_err_to_name(ret));
-    else
-        ESP_LOGI(TAG, "[DHCP] Captive Portal URI set: %s", captiveportal_uri);
+    ret = esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri));
+    if (ret != ESP_OK){
+        ESP_LOGE(TAG_DHCP, "Failed to set DHCP option: %s", esp_err_to_name(ret));
+    }
+    else{
+        ESP_LOGI(TAG_DHCP, "Captive Portal URI set: %s", captiveportal_uri);
+
+    }
 
     ret = esp_netif_dhcps_start(netif);
-    if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
-        ESP_LOGW(TAG, "Failed to start DHCP: %s", esp_err_to_name(ret));
-    else
-        ESP_LOGI(TAG, "[DHCP] Server started succesfully");
+    if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED){
+        ESP_LOGW(TAG_DHCP, "Failed to start DHCP: %s", esp_err_to_name(ret));
+    }
+    else{
+        ESP_LOGI(TAG_DHCP, "Server started succesfully");
+
+    }
 }
