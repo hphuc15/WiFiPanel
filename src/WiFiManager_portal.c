@@ -75,6 +75,9 @@ static void dns_task(void *arg)
         hdr->flags = htons(0x8400);
         hdr->ancount = htons(1);
 
+        if (len + 16 > (int)sizeof(buf)) {
+            continue;
+        }
         /* Append answer record after the question section */
         uint8_t *ans = buf + len;
         *ans++ = 0xC0;
