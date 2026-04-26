@@ -5,7 +5,7 @@
 #include "esp_mac.h"
 #include "esp_event.h"
 
-static const char *TAG          = "[WiFi]";
+// static const char *TAG          = "[WiFi]";
 static const char *TAG_INIT     = "[WiFi][INIT]";
 static const char *TAG_STA      = "[WiFi][STA]";
 static const char *TAG_AP       = "[WiFi][AP]";
@@ -346,11 +346,9 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
 
     /* Copy credentials into clean STA config */
     wifi_auth_mode_t authmode = wm->config.sta.threshold.authmode;
-    char ssid[32], password[64];
-    strncpy(ssid, (char *)wm->config.sta.ssid, sizeof(ssid) - 1);
-    strncpy(password, (char *)wm->config.sta.password, sizeof(password) - 1);
-    ssid[sizeof(ssid) - 1] = '\0';
-    password[sizeof(password) - 1] = '\0';
+    char ssid[33], password[65];
+    snprintf(ssid, sizeof(ssid), "%s", (char *)wm->config.sta.ssid);
+    snprintf(password, sizeof(password), "%s", (char *)wm->config.sta.password);
 
     memset(&wm->config, 0, sizeof(wm->config));
     strncpy((char *)wm->config.sta.ssid, ssid, sizeof(wm->config.sta.ssid) - 1);

@@ -278,7 +278,7 @@ int WiFiManagerPage_AddParam(WiFiManager_t *wm,
 
 const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id)
 {
-    WiFiManagerPage_t *page = &wm->page;
+    const WiFiManagerPage_t *page = &wm->page;
     for (size_t i = 0; i < page->count; i++)
     {
         if (strcmp(page->params[i].id, id) == 0)
@@ -289,7 +289,7 @@ const char *WiFiManagerPage_GetParam(const WiFiManager_t *wm, const char *id)
 
 char *WiFiManagerPage_Build(const WiFiManager_t *wm)
 {
-    WiFiManagerPage_t *page = &wm->page;
+    const WiFiManagerPage_t *page = &wm->page;
     StrBuf sb;
     if (sb_init(&sb, 5120) < 0)
         return NULL;
