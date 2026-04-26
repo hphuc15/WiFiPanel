@@ -7,9 +7,9 @@
 #include "esp_event.h"
 #include "netinet/in.h"
 
-static const char *TAG_PORTAL   = "[WiFi][PORTAL]";
-static const char *TAG_DNS      = "[WiFi][DNS]";
-static const char *TAG_DHCP     = "[WiFi][DHCP]";
+static const char *TAG_PORTAL   = "[WM][PORTAL]";
+static const char *TAG_DNS      = "[WM][DNS]";
+static const char *TAG_DHCP     = "[WM][DHCP]";
 
 /* ===================== INTERNAL: DNS SERVER ========================= */
 

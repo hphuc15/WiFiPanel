@@ -5,14 +5,14 @@
 #include "esp_mac.h"
 #include "esp_event.h"
 
-// static const char *TAG          = "[WiFi]";
-static const char *TAG_INIT     = "[WiFi][INIT]";
-static const char *TAG_STA      = "[WiFi][STA]";
-static const char *TAG_AP       = "[WiFi][AP]";
-static const char *TAG_STOP     = "[WiFi][STOP]";
-static const char *TAG_DEINIT   = "[WiFi][DEINIT]";
-static const char *TAG_PORTAL   = "[WiFi][PORTAL]";
-static const char *TAG_AUTO     = "[WiFi][AUTO]";
+// static const char *TAG          = "[WM]";
+static const char *TAG_INIT     = "[WM][INIT]";
+static const char *TAG_STA      = "[WM][STA]";
+static const char *TAG_AP       = "[WM][AP]";
+static const char *TAG_STOP     = "[WM][STOP]";
+static const char *TAG_DEINIT   = "[WM][DEINIT]";
+static const char *TAG_PORTAL   = "[WM][PORTAL]";
+static const char *TAG_AUTO     = "[WM][AUTO]";
 
 /* ===================== INTERNAL: WIFI CORE ========================== */
 
