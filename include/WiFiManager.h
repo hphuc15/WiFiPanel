@@ -85,7 +85,8 @@ typedef struct
 /** Main WiFi Manager instance. Zero-initialize before use. */
 typedef struct
 {
-    wifi_config_t config;                                    /**< WiFi config: SSID, password, authmode, ... */
+    wifi_ap_config_t ap_config;                              /**< AP config: SSID, password, max_connection, ... */
+    wifi_sta_config_t sta_config;                            /**< STA config: SSID, password, authmode, ... */
     WiFiManagerEvent_t event;                                /**< Event group and handler instances. */
     esp_netif_t *netif;                                      /**< Active network interface (STA or AP). */
     uint8_t sta_retry_num;                                   /**< Max STA reconnect attempts on disconnect. */

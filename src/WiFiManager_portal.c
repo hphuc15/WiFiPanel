@@ -175,15 +175,12 @@ static esp_err_t _wm_parse_urlencoder(WiFiManager_t *wm, char *body)
 
             if (strcmp(dkey, "ssid") == 0)
             {
-                strncpy((char *)wm->config.sta.ssid, dval,
-                        sizeof(wm->config.sta.ssid) - 1);
+                strncpy((char *)wm->sta_config.ssid, dval, sizeof(wm->sta_config.ssid) - 1);
             }
             else if (strcmp(dkey, "password") == 0)
             {
-                strncpy((char *)wm->config.sta.password, dval,
-                        sizeof(wm->config.sta.password) - 1);
-                wm->config.sta.threshold.authmode =
-                    strlen(dval) ? WIFI_AUTH_WPA_WPA2_PSK : WIFI_AUTH_OPEN;
+                strncpy((char *)wm->sta_config.password, dval, sizeof(wm->sta_config.password) - 1);
+                wm->sta_config.threshold.authmode = strlen(dval) ? WIFI_AUTH_WPA_WPA2_PSK : WIFI_AUTH_OPEN;
             }
             else
             {
@@ -317,11 +314,13 @@ httpd_handle_t WiFiManager_StartWebServer(WiFiManager_t *wm)
 
 void WiFiManager_StopWebServer(WiFiManager_t *wm)
 {
+    ESP_LOGI(TAG_PORTAL, "Stopping HTTP...");
     if (wm->server)
     {
         httpd_stop(wm->server);
         wm->server = NULL;
     }
+    ESP_LOGI(TAG_PORTAL, "HTTP stopped");
 }
 
 void *WiFiManager_StartDNS(esp_ip4_addr_t ip)
@@ -331,7 +330,9 @@ void *WiFiManager_StartDNS(esp_ip4_addr_t ip)
 
 void WiFiManager_StopDNS(void *handle)
 {
+    ESP_LOGI(TAG_PORTAL, "Stopping DNS...");
     dns_stop((dns_server_t *)handle);
+    ESP_LOGI(TAG_PORTAL, "DNS stopped");
 }
 
 void WiFiManager_SetCaptivePortalURI(WiFiManager_t *wm)
