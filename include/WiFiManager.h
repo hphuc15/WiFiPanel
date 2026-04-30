@@ -148,6 +148,12 @@ void WiFiManager_Stop(WiFiManager_t *wm);
 void WiFiManager_Deinit(WiFiManager_t *wm);
 
 /**
+ * @brief Check if connected to Access Point
+ * @param wm Pointer to WiFiManager instance
+ */
+bool WiFiManager_IsConnectedAP(WiFiManager_t *wm);
+
+/**
  * @brief Get the current WiFi mode.
  * @return Current wifi_mode_t (WIFI_MODE_STA, WIFI_MODE_AP, ...),
  *         or WIFI_MODE_NULL if WiFi is not initialized.

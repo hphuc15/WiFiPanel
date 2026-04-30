@@ -174,6 +174,14 @@ void WiFiManager_StartSTA(WiFiManager_t *wm)
     vTaskDelay(pdMS_TO_TICKS(100));
 }
 
+bool WiFiManager_IsConnectedAP(WiFiManager_t *wm)
+{
+    if (!wm || !wm->event.group){
+        return false;
+    }
+    return (xEventGroupGetBits(wm->event.group) & WM_EVENT_BIT_STACONNECTED) != 0;
+}
+
 void WiFiManager_StartAP(WiFiManager_t *wm)
 {
     if (!wm->netif){
