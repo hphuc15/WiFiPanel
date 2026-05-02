@@ -208,26 +208,25 @@ static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
     case HTTP_GET:
     {
         WiFiManager_t *wm = (WiFiManager_t *)req->user_ctx;
-        if (!wm)
-        {
-            ESP_LOGE(TAG_PORTAL, "User context is null.");
-            return ESP_ERR_INVALID_ARG;
-        }
-
-        char *html = WiFiManagerPage_Build(wm);
-        if (!html)
-        {
-            ESP_LOGE(TAG_PORTAL, "Failed to generate config page.");
-            httpd_resp_send_500(req);
-            return ESP_FAIL;
-        }
+        if (!wm) return ESP_ERR_INVALID_ARG;
 
         httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
-        free(html);
+
+        /* HEAD already inlude CSS + SSID + Password fields */
+        httpd_resp_send_chunk(req, WiFiManagerPage_GetHead(), HTTPD_RESP_USE_STRLEN);
+
+        /* Only dynamic extra fields */
+        char *fields = WiFiManagerPage_BuildFields(wm);
+        if (fields) {
+            httpd_resp_send_chunk(req, fields, HTTPD_RESP_USE_STRLEN);
+            free(fields);
+        }
+
+        // TAIL: submit button + JS
+        httpd_resp_send_chunk(req, WiFiManagerPage_GetTail(), HTTPD_RESP_USE_STRLEN);
+        httpd_resp_send_chunk(req, NULL, 0);
         return ESP_OK;
     }
-
     case HTTP_POST:
     {
         WiFiManager_t *wm = (WiFiManager_t *)req->user_ctx;
@@ -291,9 +290,11 @@ httpd_handle_t WiFiManager_StartWebServer(WiFiManager_t *wm)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_open_sockets = 6;
+    config.stack_size = 4096;
+    config.max_open_sockets = 2;
     config.lru_purge_enable = true;
-    config.recv_wait_timeout = 180;
+    config.recv_wait_timeout = 10;
+    config.send_wait_timeout = 10;
 
     ESP_LOGI(TAG_PORTAL, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK)
