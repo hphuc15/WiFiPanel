@@ -157,6 +157,7 @@ static void url_decode(char *dst, const char *src, size_t dst_size)
 }
 
 /** Parse a URL-encoded form body and store field values into wm. */
+/** Parse a URL-encoded form body and store field values into wm. */
 static esp_err_t _wm_parse_urlencoder(WiFiManager_t *wm, char *body)
 {
     char *sp_pair, *sp_kv;
@@ -169,18 +170,20 @@ static esp_err_t _wm_parse_urlencoder(WiFiManager_t *wm, char *body)
 
         if (key)
         {
-            char dkey[WM_FIELD_LEN], dval[WM_FIELD_LEN];
+            char dkey[WM_FIELD_LEN] = {0}, dval[WM_FIELD_LEN] = {0};    /* zero-init */
             url_decode(dkey, key, sizeof(dkey));
             url_decode(dval, val ? val : "", sizeof(dval));
 
             if (strcmp(dkey, "ssid") == 0)
             {
                 strncpy((char *)wm->sta_config.ssid, dval, sizeof(wm->sta_config.ssid) - 1);
+                wm->sta_config.ssid[sizeof(wm->sta_config.ssid) - 1] = '\0';
             }
             else if (strcmp(dkey, "password") == 0)
             {
                 strncpy((char *)wm->sta_config.password, dval, sizeof(wm->sta_config.password) - 1);
-                wm->sta_config.threshold.authmode = strlen(dval) ? WIFI_AUTH_WPA_WPA2_PSK : WIFI_AUTH_OPEN;
+                wm->sta_config.password[sizeof(wm->sta_config.password) - 1] = '\0';
+                wm->sta_config.threshold.authmode = WIFI_AUTH_OPEN;
             }
             else
             {
@@ -189,7 +192,7 @@ static esp_err_t _wm_parse_urlencoder(WiFiManager_t *wm, char *body)
                     WiFiManagerParam_t *p = &wm->page.params[i];
                     if (strcmp(p->id, dkey) == 0)
                     {
-                        strncpy(p->value, dval, WM_FIELD_LEN - 1);
+                        snprintf(p->value, WM_FIELD_LEN, "%s", dval);
                         break;
                     }
                 }
@@ -249,12 +252,13 @@ static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
         _wm_parse_urlencoder(wm, content);
 
         ESP_LOGI(TAG_PORTAL, "Form body: %s", content);
-        const char *resp_str = "Data received";
-        httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+        httpd_resp_set_hdr(req, "Connection", "close");
+        httpd_resp_send(req, "Data received", HTTPD_RESP_USE_STRLEN);
         ESP_LOGI(TAG_PORTAL, "Configuration received");
 
-        if (wm->portal_waiting_task)
+        if (wm->portal_waiting_task){
             xTaskNotifyGive(wm->portal_waiting_task);
+        }
 
         return ESP_OK;
     }

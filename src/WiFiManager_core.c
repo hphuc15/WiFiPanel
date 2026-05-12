@@ -21,6 +21,7 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
 {
     WiFiManager_t *wm = (WiFiManager_t *)arg;
     esp_err_t err;
+    static int s_retry_remaining = 0;
 
     if (event_base == WIFI_EVENT)
     {
@@ -59,34 +60,36 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
         case WIFI_EVENT_STA_START:
         {
             xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STASTART);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            s_retry_remaining = wm->sta_retry_num;
             err = esp_wifi_connect();
-            if (err != ESP_OK){
-                ESP_LOGE(TAG_STA, "Failed to connect to the AP: %s", esp_err_to_name(err));
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_STA, "Failed to connect: %s", esp_err_to_name(err));
             }
             break;
         }
 
         case WIFI_EVENT_STA_DISCONNECTED:
         {
-            if (!(xEventGroupGetBits(wm->event.group) & WM_EVENT_BIT_STASTART)){
+            if (!(xEventGroupGetBits(wm->event.group) & WM_EVENT_BIT_STASTART)) {
                 break;
             }
 
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
-            ESP_LOGE(TAG_STA, "Disconnected to AP, reason: %d", event->reason);
+            ESP_LOGE(TAG_STA, "Disconnected, reason: %d", event->reason);
 
-            if (wm->sta_retry_num > 0)
+            if (s_retry_remaining != 0)
             {
-                wm->sta_retry_num--;
-                ESP_LOGW(TAG_STA, "Retrying... (%d left)", wm->sta_retry_num);
+                if (s_retry_remaining > 0){
+                    s_retry_remaining--;
+                }
+                ESP_LOGW(TAG_STA, "Retrying... (%d left)", s_retry_remaining);
                 esp_wifi_connect();
             }
             else
             {
                 xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
                 xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
-                if (wm->DisconnectedAP_Cb){
+                if (wm->DisconnectedAP_Cb) {
                     wm->DisconnectedAP_Cb();
                 }
             }
@@ -104,6 +107,36 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
             wm->ConnectedAP_Cb();
         }
     }
+}
+
+/**
+ * @brief Load saved STA credentials from NVS into wm->sta_config.
+ * @return true  if valid credentials found
+ * @return false if no credentials, load failed, or SSID matches config AP
+ */
+static bool _wm_load_saved_config(WiFiManager_t *wm)
+{
+    wifi_config_t saved_config;
+    esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG_AUTO, "Failed to get config from NVS: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    if (strlen((char *)saved_config.sta.ssid) == 0) {
+        ESP_LOGW(TAG_AUTO, "No saved SSID found in NVS");
+        return false;
+    }
+
+    if (strcmp((char *)saved_config.sta.ssid, WM_AP_SSID_DEFAULT) == 0) {
+        ESP_LOGW(TAG_AUTO, "Saved SSID is config AP (%s), ignoring...", (char *)saved_config.sta.ssid);
+        return false;
+    }
+
+    memcpy(&wm->sta_config, &saved_config.sta, sizeof(wifi_sta_config_t));
+    ESP_LOGI(TAG_AUTO, "Loaded saved SSID: %s", (char *)wm->sta_config.ssid);
+    return true;
 }
 
 /* ===================== PUBLIC: WIFI LIFECYCLE ======================= */
@@ -151,6 +184,8 @@ void WiFiManager_Init(WiFiManager_t *wm)
 
 void WiFiManager_StartSTA(WiFiManager_t *wm)
 {
+    xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED);
+
     if (wm->netif == NULL){
         wm->netif = esp_netif_create_default_wifi_sta();
     }
@@ -176,6 +211,8 @@ void WiFiManager_StartSTA(WiFiManager_t *wm)
 
 void WiFiManager_StartAP(WiFiManager_t *wm)
 {
+    xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_APSTART);
+    
     if (!wm->netif){
         wm->netif = esp_netif_create_default_wifi_ap();
     }
@@ -331,6 +368,7 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
         ESP_LOGI(TAG_PORTAL, "AP stopped");
         return;
     }
+    vTaskDelay(pdMS_TO_TICKS(300));
 
     WiFiManager_StopDNS(dns);
     WiFiManager_StopWebServer(wm);
@@ -341,16 +379,11 @@ void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
     vTaskDelay(pdMS_TO_TICKS(500));
 
     /* Copy credentials into clean STA config */
-    wifi_auth_mode_t authmode = wm->sta_config.threshold.authmode;
-    char ssid[33], password[65];
-    snprintf(ssid, sizeof(ssid), "%s", (char *)wm->sta_config.ssid);
-    snprintf(password, sizeof(password), "%s", (char *)wm->sta_config.password);
-
-    strncpy((char *)wm->sta_config.ssid, ssid, sizeof(wm->sta_config.ssid) - 1);
-    strncpy((char *)wm->sta_config.password, password, sizeof(wm->sta_config.password) - 1);
-    wm->sta_config.threshold.authmode = authmode;
+    wm->sta_config.ssid[sizeof(wm->sta_config.ssid) - 1] = '\0';
+    wm->sta_config.password[sizeof(wm->sta_config.password) - 1] = '\0';
+    wm->sta_config.threshold.authmode = WIFI_AUTH_OPEN;
     wm->sta_config.scan_method = WIFI_ALL_CHANNEL_SCAN;
-    wm->sta_config.failure_retry_cnt = wm->sta_retry_num;
+    // wm->sta_config.failure_retry_cnt = wm->sta_retry_num;
 
     ESP_LOGI(TAG_PORTAL, "Switching to STA...");
     WiFiManager_StartSTA(wm);
@@ -367,51 +400,21 @@ void WiFiManager_AutoConnect(WiFiManager_t *wm)
     ESP_LOGI(TAG_AUTO, "Attempting to load saved credentials from NVS...");
 
     /* Get saved STA configuration from NVS */
-    wifi_config_t saved_config;
-    esp_err_t err = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
-    // wm->sta_retry_num = 3;
-
-    if (err != ESP_OK)
+    if(!_wm_load_saved_config(wm))
     {
-        ESP_LOGE(TAG_AUTO, "Failed to get config from NVS: %s", esp_err_to_name(err));
-        ESP_LOGI(TAG_AUTO, "Starting AP configuration mode");
+        ESP_LOGI(TAG_AUTO, "No valid saved config, starting AP configuration mode");
         WiFiManager_ConfigViaAP(wm);
         return;
     }
 
-    /* Check if saved credentials exist */
-    if (strlen((char *)saved_config.sta.ssid) == 0)
-    {
-        ESP_LOGW(TAG_AUTO, "No saved SSID found in NVS, starting AP configuration mode");
-        WiFiManager_ConfigViaAP(wm);
-        return;
-    }
+    ESP_LOGI(TAG_AUTO, "Found saved SSID: %s, attempting to connect...", (char *)wm->sta_config.ssid);
 
-    /* Avoid using captive portal AP config as STA */
-    if (strcmp((char *)saved_config.sta.ssid, WM_AP_SSID_DEFAULT) == 0)
-    {
-        ESP_LOGW(TAG_AUTO, "Saved SSID is config AP (%s), ignoring...",(char *)saved_config.sta.ssid);
-
-        WiFiManager_ConfigViaAP(wm);
-        return;
-    }
-
-    /* Copy saved config to wm structure */
-    memcpy(&wm->sta_config, &saved_config.sta, sizeof(wifi_sta_config_t));
-
-    ESP_LOGI(TAG_AUTO, "Found saved SSID: %s, attempting to connect...", (char *)saved_config.sta.ssid);
-
-    xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED);
     /* Try to connect to saved AP */
     WiFiManager_StartSTA(wm);
 
     /* Wait for connection or timeout */
-    EventBits_t bits = xEventGroupWaitBits(
-        wm->event.group,
-        WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED,
-        pdFALSE,
-        pdFALSE,
-        pdMS_TO_TICKS(15000));
+    TickType_t timeout = (wm->sta_retry_num == -1) ? portMAX_DELAY : pdMS_TO_TICKS(30000);
+    EventBits_t bits = xEventGroupWaitBits(wm->event.group, WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED, pdFALSE, pdFALSE, timeout);
 
     /* Check if we got connected */
     if (bits & WM_EVENT_BIT_STACONNECTED)
@@ -441,7 +444,7 @@ wifi_mode_t WiFiManager_GetMode(void)
     return mode;
 }
 
-bool WiFiManager_IsConnectedAP(WiFiManager_t *wm)
+bool WiFiManager_IsConnected(WiFiManager_t *wm)
 {
     if (!wm || !wm->event.group){
         return false;
