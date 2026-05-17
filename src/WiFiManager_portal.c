@@ -256,9 +256,6 @@ static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
         httpd_resp_send(req, "Data received", HTTPD_RESP_USE_STRLEN);
         ESP_LOGI(TAG_PORTAL, "Configuration received");
 
-        int sockfd = httpd_req_to_sockfd(req);
-        httpd_sess_trigger_close(wm->server, sockfd);
-        
         if (wm->portal_waiting_task){
             xTaskNotifyGive(wm->portal_waiting_task);
         }
