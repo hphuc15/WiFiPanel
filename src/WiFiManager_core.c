@@ -89,6 +89,7 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
             {
                 xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
                 xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
+                s_retry_remaining = wm->sta_retry_num;
                 if (wm->DisconnectedAP_Cb) {
                     wm->DisconnectedAP_Cb();
                 }
@@ -99,6 +100,7 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
+        s_retry_remaining = wm->sta_retry_num;
         xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
         xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -335,7 +337,9 @@ void WiFiManager_Deinit(WiFiManager_t *wm)
 
 void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
 {
-    wm->ap_config = WM_AP_CONFIG_DEFAULT();
+    if(strlen((char *)wm->ap_config.ssid) == 0){
+        wm->ap_config = WM_AP_CONFIG_DEFAULT();
+    }
     WiFiManager_StartAP(wm);
     EventBits_t bits = xEventGroupWaitBits(wm->event.group, WM_EVENT_BIT_APSTART, pdFALSE, pdFALSE, pdMS_TO_TICKS(30000));
     if (!(bits & WM_EVENT_BIT_APSTART))
