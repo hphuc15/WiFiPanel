@@ -21,7 +21,6 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
 {
     WiFiManager_t *wm = (WiFiManager_t *)arg;
     esp_err_t err;
-    static int s_retry_remaining = 0;
 
     if (event_base == WIFI_EVENT)
     {
@@ -60,7 +59,7 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
         case WIFI_EVENT_STA_START:
         {
             xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STASTART);
-            s_retry_remaining = wm->sta_retry_num;
+            wm->sta_retry_remaining = wm->sta_retry_num;
             err = esp_wifi_connect();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG_STA, "Failed to connect: %s", esp_err_to_name(err));
@@ -77,19 +76,19 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
             ESP_LOGE(TAG_STA, "Disconnected, reason: %d", event->reason);
 
-            if (s_retry_remaining != 0)
+            if (wm->sta_retry_remaining != 0)
             {
-                if (s_retry_remaining > 0){
-                    s_retry_remaining--;
+                if (wm->sta_retry_remaining > 0){
+                    wm->sta_retry_remaining--;
                 }
-                ESP_LOGW(TAG_STA, "Retrying... (%d left)", s_retry_remaining);
+                ESP_LOGW(TAG_STA, "Retrying... (%d left)", wm->sta_retry_remaining);
                 esp_wifi_connect();
             }
             else
             {
                 xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
                 xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
-                s_retry_remaining = wm->sta_retry_num;
+                wm->sta_retry_remaining = wm->sta_retry_num;
                 if (wm->DisconnectedAP_Cb) {
                     wm->DisconnectedAP_Cb();
                 }
@@ -100,7 +99,7 @@ static void _wm_event_handler(void *arg, esp_event_base_t event_base, int32_t ev
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
-        s_retry_remaining = wm->sta_retry_num;
+        wm->sta_retry_remaining = wm->sta_retry_num;
         xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STADISCONNECTED);
         xEventGroupSetBits(wm->event.group, WM_EVENT_BIT_STACONNECTED);
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -188,9 +187,10 @@ void WiFiManager_StartSTA(WiFiManager_t *wm)
 {
     xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_STACONNECTED | WM_EVENT_BIT_STADISCONNECTED);
 
-    if (wm->netif == NULL){
-        wm->netif = esp_netif_create_default_wifi_sta();
+    if (wm->netif) {
+        esp_netif_destroy_default_wifi(wm->netif);
     }
+    wm->netif = esp_netif_create_default_wifi_sta();
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, _wm_event_handler, wm, &wm->event.sta_handle));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, _wm_event_handler, wm, &wm->event.sta_disc_handle));
@@ -214,10 +214,11 @@ void WiFiManager_StartSTA(WiFiManager_t *wm)
 void WiFiManager_StartAP(WiFiManager_t *wm)
 {
     xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_APSTART);
-    
-    if (!wm->netif){
-        wm->netif = esp_netif_create_default_wifi_ap();
+
+    if (wm->netif) {
+        esp_netif_destroy_default_wifi(wm->netif);
     }
+    wm->netif = esp_netif_create_default_wifi_ap();
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, _wm_event_handler, wm, &wm->event.ap_connected_handle));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, _wm_event_handler, wm, &wm->event.ap_disconnected_handle));
@@ -251,6 +252,23 @@ void WiFiManager_Stop(WiFiManager_t *wm)
     }
     ESP_LOGI(TAG_STOP, "Stopping WiFi (mode: %d)", mode);
 
+    /* Disconnect and stop WiFi BEFORE unregistering handlers, so events can still be processed during shutdown. */
+    if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) {
+        err = esp_wifi_disconnect();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
+            ESP_LOGW(TAG_STOP, "Disconnect failed: %s", esp_err_to_name(err));
+        }
+        else{
+            ESP_LOGI(TAG_STOP, "STA disconnected requested");
+        }
+    }
+
+    err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
+        ESP_LOGE(TAG_STOP, "Failed to stop WiFi: %s", esp_err_to_name(err));
+    }
+
+    /* Now safe to unregister handlers — no more events will fire. */
     if (wm->event.ap_connected_handle) {
         esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, wm->event.ap_connected_handle);
         wm->event.ap_connected_handle = NULL;
@@ -274,22 +292,6 @@ void WiFiManager_Stop(WiFiManager_t *wm)
     if (wm->event.ip_handle) {
         esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, wm->event.ip_handle);
         wm->event.ip_handle = NULL;
-    }
-
-    /* Only for STA and APSTA mode */
-    if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) {
-        err = esp_wifi_disconnect();
-        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
-            ESP_LOGW(TAG_STOP, "Disconnect failed: %s", esp_err_to_name(err));
-        }
-        else{
-            ESP_LOGI(TAG_STOP, "STA disconnected requested");
-        }
-    }
-
-    err = esp_wifi_stop();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED){
-        ESP_LOGE(TAG_STOP, "Failed to stop WiFi: %s", esp_err_to_name(err));
     }
 
     xEventGroupClearBits(wm->event.group, WM_EVENT_BIT_APSTART);
@@ -337,6 +339,9 @@ void WiFiManager_Deinit(WiFiManager_t *wm)
 
 void WiFiManager_ConfigViaAP(WiFiManager_t *wm)
 {
+    if(strlen((char *)wm->ap_config.ssid) == 0){
+        wm->ap_config = WM_AP_CONFIG_DEFAULT();
+    }
     if(strlen((char *)wm->ap_config.ssid) == 0){
         wm->ap_config = WM_AP_CONFIG_DEFAULT();
     }

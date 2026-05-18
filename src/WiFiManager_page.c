@@ -1,4 +1,5 @@
 #include "WiFiManager.h"
+#include "WiFiManager_defs.h"
 
 #include <stdlib.h>
 #include <string.h>

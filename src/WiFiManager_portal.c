@@ -59,6 +59,9 @@ static void dns_task(void *arg)
         socklen_t clen = sizeof(client);
         int len = recvfrom(srv->sock, buf, sizeof(buf), 0, (struct sockaddr *)&client, &clen);
 
+        if (len < 0) {
+            break;
+        }
         if (len < (int)sizeof(dns_hdr_t)){
             continue;
         }
@@ -237,6 +240,12 @@ static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
         {
             ESP_LOGE(TAG_PORTAL, "user context is null.");
             return ESP_ERR_INVALID_ARG;
+        }
+
+        if (req->content_len == 0) {
+            ESP_LOGW(TAG_PORTAL, "Empty POST body");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty request body");
+            return ESP_FAIL;
         }
 
         char content[WM_PORTAL_BODY_SIZE];

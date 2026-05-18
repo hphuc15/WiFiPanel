@@ -98,6 +98,7 @@ typedef struct {
     WiFiManagerEvent_t                    event;                /**< Event group and handler instances. */
     esp_netif_t                          *netif;                /**< Active network interface (STA or AP). */
     int                                   sta_retry_num;        /**< Max STA reconnect attempts on disconnect. */
+    int                                   sta_retry_remaining;  /**< Remaining reconnect attempts (instance-local, replaces static). */
     WiFiManagerPage_t                     page;                 /**< Captive portal page with extra input fields. */
     httpd_handle_t                        server;               /**< HTTP server handle for the captive portal. */
     TaskHandle_t                          portal_waiting_task;  /**< Task handle blocked in ConfigViaAP, notified when portal form is submitted. */
