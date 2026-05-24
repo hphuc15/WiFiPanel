@@ -223,10 +223,10 @@ static esp_err_t _wm_portal_requesthandler(httpd_req_t *req)
 
         /* Only dynamic extra fields */
         char *fields = WiFiManagerPage_BuildFields(wm);
-        if (fields) {
+        if (fields && fields[0] != '\0') {
             httpd_resp_send_chunk(req, fields, HTTPD_RESP_USE_STRLEN);
-            free(fields);
         }
+        free(fields);
 
         // TAIL: submit button + JS
         httpd_resp_send_chunk(req, WiFiManagerPage_GetTail(), HTTPD_RESP_USE_STRLEN);
