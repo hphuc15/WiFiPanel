@@ -1,7 +1,0 @@
-version: "1.0.0"
-description: "WiFi Manager component for ESP32"
-url: "https://github.com/hphuc15/WiFiManager"
-repository: "https://github.com/hphuc15/WiFiManager"
-
-dependencies:
-  idf: ">=5.5.1"
