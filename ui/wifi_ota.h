@@ -1,6 +1,6 @@
 #pragma once
 
-const char OTA_PAGE[] PROGMEM = R"rawliteral(
+static const char OTA_HTML[] = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>

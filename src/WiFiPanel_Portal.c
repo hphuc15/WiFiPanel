@@ -3,7 +3,9 @@
 
 #include "wifi_home.h"
 #include "wifi_scan.h"
+#include "wifi_ota.h"
 
+#include "esp_ota_ops.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
@@ -19,6 +21,10 @@ static const char *TAG      = "[WP][PORTAL]";
 static const char *TAG_DNS  = "[WP][DNS]";
 static const char *TAG_DHCP = "[WP][DHCP]";
 
+/* OTA definitions */
+#define WP_OTA_RECV_BUF_SIZE    2048
+#define WP_OTA_TAIL_MARGIN      64
+
 /* ================================================================
  * Forward declarations (WiFiPanel_Page.c)
  * ================================================================ */
@@ -31,7 +37,7 @@ const char *WiFiPanelPage_GetHead(void);
 const char *WiFiPanelPage_GetTail(void);
 
 /* ================================================================
- * DNS — Constants
+ * DNS - Constants
  * ================================================================ */
 
 #define WP_DNS_PORT             53
@@ -82,7 +88,7 @@ const char *WiFiPanelPage_GetTail(void);
 #define WP_DNS_IS_PTR(byte)     (((byte) & 0xC0) == 0xC0)
 
 /* ================================================================
- * DNS — Types
+ * DNS - Types
  * ================================================================ */
 
 typedef enum {
@@ -141,7 +147,7 @@ typedef struct {
 } WiFiPanel_DNS_t;
 
 /* ================================================================
- * DNS — Internal helpers
+ * DNS - Internal helpers
  * ================================================================ */
 
 static const char *WiFiPanel_DNS_StatusToStr(WiFiPanel_DNS_Status status)
@@ -165,7 +171,7 @@ static const char *WiFiPanel_DNS_StatusToStr(WiFiPanel_DNS_Status status)
  * @brief Skip a QNAME in a raw DNS buffer and return the offset after it.
  *
  * Handles label sequences terminated by 0x00.
- * Pointer compression (0xC0 prefix) counts as a 2-byte leaf — we do not
+ * Pointer compression (0xC0 prefix) counts as a 2-byte leaf - we do not
  * follow the pointer because queries from captive-portal clients virtually
  * never use compression.
  *
@@ -182,10 +188,10 @@ static size_t _dns_skip_qname(const uint8_t *buf, size_t len, size_t pos)
         uint8_t b = buf[pos];
 
         if (b == 0x00) {
-            return pos + 1;                 /* null terminator — stop */
+            return pos + 1;                 /* null terminator - stop */
         }
         if (WP_DNS_IS_PTR(b)) {
-            return pos + 2;                 /* compression pointer — 2-byte leaf */
+            return pos + 2;                 /* compression pointer - 2-byte leaf */
         }
         if (b > WP_DNS_LABEL_MAX_LEN) {
             ESP_LOGE(TAG_DNS, "label length %u exceeds max %u", b, WP_DNS_LABEL_MAX_LEN);
@@ -424,7 +430,7 @@ static WiFiPanel_DNS_Status WiFiPanel_DNS_Poll(WiFiPanel_DNS_t *srv)
     ssize_t recv_len = recvfrom(srv->sockfd, srv->buf, WP_DNS_MAX_PACKET_SIZE, 0, (struct sockaddr *)&client, &client_len);
     if (recv_len < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK){
-            return WP_DNS_OK; /* no packet — normal */
+            return WP_DNS_OK; /* no packet - normal */
         }
         ESP_LOGE(TAG_DNS, "recvfrom() error: %d", errno);
         return WP_DNS_ERR_RECV;
@@ -436,7 +442,7 @@ static WiFiPanel_DNS_Status WiFiPanel_DNS_Poll(WiFiPanel_DNS_t *srv)
     WiFiPanel_DNS_Header hdr;
     size_t qname_end;
     if (!WiFiPanel_DNS_ParseQuery(srv->buf, (size_t)recv_len, &hdr, &qname_end))
-        return WP_DNS_OK; /* bad/unsupported packet — discard silently */
+        return WP_DNS_OK; /* bad/unsupported packet - discard silently */
 
     /* Build response */
     uint8_t resp[WP_DNS_MAX_PACKET_SIZE];
@@ -475,7 +481,7 @@ static void WiFiPanel_DNS_Stop(WiFiPanel_DNS_t *srv)
 }
 
 /* ================================================================
- * DNS server (public wrappers — declared in WiFiPanel_Priv.h)
+ * DNS server (public wrappers - declared in WiFiPanel_Priv.h)
  * ================================================================ */
 
 typedef struct {
@@ -759,9 +765,222 @@ static esp_err_t _handler_reset_get(httpd_req_t *req)
     return ESP_OK;
 }
 
+ 
+/* Extracts the boundary string (without leading "--") from the
+ * Content-Type header, e.g. "multipart/form-data; boundary=----XYZ".
+ * Returns ESP_OK and writes into out (NUL-terminated) or ESP_FAIL. */
+static esp_err_t _ota_get_boundary(httpd_req_t *req, char *out, size_t out_size)
+{
+    char ctype[160];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", ctype, sizeof(ctype)) != ESP_OK) {
+        return ESP_FAIL;
+    }
+ 
+    const char *key = "boundary=";
+    char *p = strstr(ctype, key);
+    if (!p) {
+        return ESP_FAIL;
+    }
+    p += strlen(key);
+ 
+    /* Boundary value may be quoted; strip quotes if present */
+    if (*p == '"') {
+        p++;
+        char *end = strchr(p, '"');
+        if (end) *end = '\0';
+    }
+ 
+    snprintf(out, out_size, "--%s", p); /* the wire boundary is "--" + value */
+    return ESP_OK;
+}
+ 
+/* Locates the first occurrence of "\r\n\r\n" within buf[0..len).
+ * Returns offset of the byte AFTER it, or -1 if not found. */
+static int _find_header_end(const char *buf, int len)
+{
+    for (int i = 0; i + 3 < len; i++) {
+        if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') {
+            return i + 4;
+        }
+    }
+    return -1;
+}
+
+static esp_err_t _handler_ota_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, OTA_HTML, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* POST /ota - receive firmware via multipart/form-data and flash it */
+static esp_err_t _handler_ota_post(httpd_req_t *req)
+{
+    WiFiPanel *wp = req->user_ctx;
+    if (!wp) {
+        return ESP_ERR_INVALID_ARG;
+    }
+ 
+    if (req->content_len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+ 
+    char boundary[96];
+    if (_ota_get_boundary(req, boundary, sizeof(boundary)) != ESP_OK) {
+        ESP_LOGE(TAG, "/ota: missing or malformed boundary");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Content-Type");
+        return ESP_FAIL;
+    }
+    size_t boundary_len = strlen(boundary);
+    ESP_LOGI(TAG, "/ota: boundary='%s' content_len=%d", boundary, req->content_len);
+ 
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (!update_partition) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "/ota: writing to partition '%s' at 0x%lx",
+             update_partition->label, (unsigned long)update_partition->address);
+ 
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin failed");
+        return ESP_FAIL;
+    }
+ 
+    char  *buf            = malloc(WP_OTA_RECV_BUF_SIZE);
+    bool   header_skipped = false;
+    bool   write_failed    = false;
+    int    remaining       = req->content_len;
+    size_t total_written   = 0;
+
+    char  *tail        = malloc(WP_OTA_TAIL_MARGIN + boundary_len + 8);
+    size_t tail_len    = 0;
+ 
+    if (!buf || !tail) {
+        esp_ota_abort(ota_handle);
+        free(buf); free(tail);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+ 
+    while (remaining > 0 && !write_failed) {
+        int to_read = MIN(remaining, WP_OTA_RECV_BUF_SIZE);
+        int recv_len = httpd_req_recv(req, buf, to_read);
+        if (recv_len <= 0) {
+            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            ESP_LOGE(TAG, "/ota: recv error %d", recv_len);
+            write_failed = true;
+            break;
+        }
+        remaining -= recv_len;
+ 
+        char  *data = buf;
+        int    data_len = recv_len;
+ 
+        if (!header_skipped) {
+            int header_end = _find_header_end(buf, recv_len);
+            if (header_end < 0) {
+                ESP_LOGE(TAG, "/ota: multipart header not found in first chunk "
+                              "(increase WP_OTA_RECV_BUF_SIZE if filename is unusually long)");
+                write_failed = true;
+                break;
+            }
+            data     = buf + header_end;
+            data_len = recv_len - header_end;
+            header_skipped = true;
+        }
+ 
+        size_t hold_back = boundary_len + WP_OTA_TAIL_MARGIN;
+ 
+        if (tail_len > 0) {
+            if (esp_ota_write(ota_handle, tail, tail_len) != ESP_OK) {
+                write_failed = true;
+                break;
+            }
+            total_written += tail_len;
+            tail_len = 0;
+        }
+ 
+        if ((size_t)data_len <= hold_back) {
+            memcpy(tail, data, data_len);
+            tail_len = data_len;
+        } else {
+            size_t flush_len = data_len - hold_back;
+            if (esp_ota_write(ota_handle, data, flush_len) != ESP_OK) {
+                write_failed = true;
+                break;
+            }
+            total_written += flush_len;
+            memcpy(tail, data + flush_len, hold_back);
+            tail_len = hold_back;
+        }
+    }
+
+    if (!write_failed && tail_len > 0) {
+        char *boundary_pos = NULL;
+        for (size_t i = 0; i + boundary_len <= tail_len; i++) {
+            if (memcmp(tail + i, boundary, boundary_len) == 0) {
+                boundary_pos = tail + i;
+                break;
+            }
+        }
+        size_t real_len = boundary_pos ? (size_t)(boundary_pos - tail) : tail_len;
+ 
+        if (real_len >= 2 && tail[real_len - 2] == '\r' && tail[real_len - 1] == '\n') {
+            real_len -= 2;
+        }
+ 
+        if (real_len > 0 && esp_ota_write(ota_handle, tail, real_len) != ESP_OK) {
+            write_failed = true;
+        } else {
+            total_written += real_len;
+        }
+    }
+ 
+    free(buf);
+    free(tail);
+ 
+    if (write_failed) {
+        esp_ota_abort(ota_handle);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Flash write failed");
+        return ESP_FAIL;
+    }
+ 
+    ESP_LOGI(TAG, "/ota: %u bytes written, finalizing", (unsigned)total_written);
+ 
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        const char *msg = (err == ESP_ERR_OTA_VALIDATE_FAILED) ? "Image validation failed" : "esp_ota_end failed";
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
+        return ESP_FAIL;
+    }
+ 
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot_partition failed");
+        return ESP_FAIL;
+    }
+ 
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
+ 
+    ESP_LOGI(TAG, "/ota: success, rebooting in 1s");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+ 
+    return ESP_OK;
+}
+
 static esp_err_t _handler_captive_probe(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "_handler_captive_probe: heap=%lu", esp_get_free_heap_size());
     WiFiPanel *wp = req->user_ctx;
 
     char location[32] = "http://192.168.4.1/";
@@ -800,17 +1019,19 @@ static esp_err_t _handler_404(httpd_req_t *req, httpd_err_code_t err)
 #define WP_ENDPOINT(m, u, h)  { .uri = (u), .method = (m), .handler = (h), .user_ctx = NULL }
 
 static httpd_uri_t _endpoints[] = {
-    WP_ENDPOINT(HTTP_GET,  "/",                    _handler_home_get),
-    WP_ENDPOINT(HTTP_POST, "/",                    _handler_wifi_post),
-    WP_ENDPOINT(HTTP_GET,  "/scan",                _handler_scan_get),
-    WP_ENDPOINT(HTTP_GET,  "/config",              _handler_config_get),
-    WP_ENDPOINT(HTTP_POST, "/configsave",          _handler_configsave_post),
-    WP_ENDPOINT(HTTP_GET,  "/reset",               _handler_reset_get),
+    WP_ENDPOINT(HTTP_GET,   "/",                    _handler_home_get),
+    WP_ENDPOINT(HTTP_POST,  "/",                    _handler_wifi_post),
+    WP_ENDPOINT(HTTP_GET,   "/scan",                _handler_scan_get),
+    WP_ENDPOINT(HTTP_GET,   "/config",              _handler_config_get),
+    WP_ENDPOINT(HTTP_POST,  "/configsave",          _handler_configsave_post),
+    WP_ENDPOINT(HTTP_GET,   "/reset",               _handler_reset_get),
+    WP_ENDPOINT(HTTP_POST,  "/ota",                 _handler_ota_post),
+    WP_ENDPOINT(HTTP_GET,   "/ota",                 _handler_ota_get),
     /* Captive portal probes */
-    WP_ENDPOINT(HTTP_GET,  "/hotspot-detect.html", _handler_captive_probe), /* Apple   */
-    WP_ENDPOINT(HTTP_GET,  "/generate_204",        _handler_captive_probe), /* Android */
-    WP_ENDPOINT(HTTP_GET,  "/connecttest.txt",     _handler_captive_probe), /* Windows */
-    WP_ENDPOINT(HTTP_GET,  "/ncsi.txt",            _handler_captive_probe), /* Windows */
+    WP_ENDPOINT(HTTP_GET,   "/hotspot-detect.html", _handler_captive_probe), /* Apple   */
+    WP_ENDPOINT(HTTP_GET,   "/generate_204",        _handler_captive_probe), /* Android */
+    WP_ENDPOINT(HTTP_GET,   "/connecttest.txt",     _handler_captive_probe), /* Windows */
+    WP_ENDPOINT(HTTP_GET,   "/ncsi.txt",            _handler_captive_probe), /* Windows */
 };
 
 #define WP_ENDPOINT_COUNT  (sizeof(_endpoints) / sizeof(_endpoints[0]))

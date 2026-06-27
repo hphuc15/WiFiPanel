@@ -324,7 +324,7 @@ body {
         <div class="nav-badge">SYS</div>
       </a>
 
-      <a class="nav-card" href="/update">
+      <a class="nav-card" href="/ota">
         <div class="nav-icon">&#11014;</div>
         <div>
           <div class="nav-label">OTA Update</div>
